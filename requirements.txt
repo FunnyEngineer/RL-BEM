@@ -1,0 +1,10 @@
+pandas
+pyarrow
+scikit-learn
+torch
+torchvision
+torchaudio
+pytorch-lightning
+stable-baselines3[extra]
+matplotlib
+jupyter 
