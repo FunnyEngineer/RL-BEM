@@ -13,17 +13,17 @@ This plan outlines the steps to create a machine learning (ML) surrogate model f
   - **Details**: Merge metadata with time series for each building. Confirm feature and target availability in both datasets.  
   - *Estimated time*: 2 hours  
 
-- [ ] **Task 2.2**: Clean and preprocess the time series data  
+- [x] **Task 2.2**: Clean and preprocess the time series data  
   - **Action**: Load the time series dataset using `pandas` (from Parquet files). Handle missing timestamps, align time indices, and resample if needed. Impute missing values (e.g., forward fill for time series, median/mode for static). Normalize numerical features (e.g., insulation R-value, temperature) using Min-Max scaling or standardization. Encode categorical variables (e.g., building type) with one-hot encoding or label encoding. Encode time features (hour, day, season) as cyclical variables.  
   - **Details**: Check for outliers (e.g., spikes in energy use) and decide whether to cap or remove them.  
   - *Estimated time*: 6 hours  
 
-- [ ] **Task 2.3**: Split the data  
+- [x] **Task 2.3**: Split the data  
   - **Action**: Divide the dataset into a training pool (80%), validation set (10%), and test set (10%). Split by **building** to avoid leakage, and within each, split time series into train/val/test periods or use cross-validation over time. Use sliding windows for training (e.g., predict next 24h from previous 168h).  
   - **Details**: Ensure splitting is computationally efficient (e.g., use `train_test_split` for buildings, and windowing for time).  
   - *Estimated time*: 2 hours  
 
-- [ ] **Task 2.4**: Prepare data for efficient access  
+- [x] **Task 2.4**: Prepare data for efficient access  
   - **Action**: Save the preprocessed training pool, validation, and test sets as Parquet files for fast loading in later phases. Use multi-index DataFrames (building, timestamp) if needed. Optionally, create a smaller sample (e.g., 10K time steps) for quick testing.  
   - **Details**: Use `pandas.to_parquet()` to handle large datasets efficiently.  
   - *Estimated time*: 4 hours  
@@ -42,7 +42,7 @@ This plan outlines the steps to create a machine learning (ML) surrogate model f
   - *Estimated time*: 2 hours  
 
 - [ ] **Task 3.2**: Train a sequence model  
-  - Build a sequence model (RNN, LSTM, GRU, TCN, or transformer) using `tensorflow` or `pytorch`.  
+  - Build a sequence model (RNN, LSTM, GRU, TCN, or transformer) using `pytorch`.  
   - Predict time series targets (e.g., indoor temperature, energy use) from time series and static features.  
   - *Estimated time*: 4 hours  
 
