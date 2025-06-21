@@ -1,0 +1,31 @@
+{
+  "primary_target": [
+    "out.zone_mean_air_temp.conditioned_space.c"
+  ],
+  "secondary_targets": [
+    "out.site_energy.total.energy_consumption",
+    "out.electricity.total.energy_consumption"
+  ],
+  "static_features": [
+    "in.geometry_building_type_acs",
+    "in.geometry_floor_area",
+    "in.geometry_stories",
+    "in.vintage",
+    "in.hvac_heating_type",
+    "in.hvac_cooling_type",
+    "in.hvac_heating_efficiency",
+    "in.hvac_cooling_efficiency",
+    "in.insulation_wall",
+    "in.insulation_ceiling",
+    "in.ashrae_iecc_climate_zone_2004"
+  ],
+  "dynamic_features": [
+    "out.outdoor_air_dryblub_temp.c",
+    "timestamp"
+  ],
+  "energy_features": [
+    "out.electricity.cooling.energy_consumption",
+    "out.electricity.heating.energy_consumption",
+    "out.electricity.hot_water.energy_consumption"
+  ]
+}
