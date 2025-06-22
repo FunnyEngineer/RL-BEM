@@ -7,6 +7,7 @@
     "out.electricity.total.energy_consumption"
   ],
   "static_features": [
+    "in.sqft",
     "in.geometry_building_type_acs",
     "in.geometry_floor_area",
     "in.geometry_stories",

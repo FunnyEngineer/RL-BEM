@@ -7,4 +7,6 @@ torchaudio
 pytorch-lightning
 stable-baselines3[extra]
 matplotlib
-jupyter 
+jupyter
+wandb
+seaborn 

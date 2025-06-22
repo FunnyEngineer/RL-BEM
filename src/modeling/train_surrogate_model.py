@@ -1,45 +1,73 @@
+#!/usr/bin/env python3
 """
-Time Series Surrogate Model Training
+Train a surrogate sequence model for EnergyPlus time series prediction.
 
-This script trains a sequence model (LSTM/GRU) to predict indoor temperature and energy consumption
-from building characteristics and weather data using the preprocessed time series dataset.
+This script implements Phase 3 of the project plan:
+- Preprocess dataset for sequence modeling
+- Train a sequence model (LSTM/GRU/TCN)
+- Evaluate the model on validation data
 """
 
 import os
+import sys
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
+import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-import lightning as L
-from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
-from lightning.pytorch.loggers import CSVLogger
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+from pytorch_lightning.loggers import WandbLogger
+import wandb
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+import matplotlib.pyplot as plt
+import seaborn as sns
+from pathlib import Path
 import pickle
-import json
-from typing import Dict, List, Tuple
-import logging
+import argparse
+from typing import Tuple, Dict, Any
+import warnings
+warnings.filterwarnings('ignore')
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Add project root to path
+project_root = Path(__file__).parent.parent.parent
+sys.path.append(str(project_root))
 
 class TimeSeriesDataset(Dataset):
-    """Time Series Dataset for building energy prediction."""
+    """Dataset for time series sequence modeling."""
     
-    def __init__(self, X_path: str, y_path: str):
+    def __init__(self, X: np.ndarray, y: np.ndarray, sequence_length: int = 168):
         """
+        Initialize dataset.
+        
         Args:
-            X_path: Path to input features numpy file
-            y_path: Path to target variables numpy file
+            X: Input features [n_samples, sequence_length, n_features] or [n_samples, n_features]
+            y: Target values [n_samples, prediction_horizon, n_targets] or [n_samples, n_targets]
+            sequence_length: Length of input sequences (default: 168 hours = 1 week)
         """
-        self.X = np.load(X_path, allow_pickle=True)
-        self.y = np.load(y_path, allow_pickle=True)
+        # Convert to float arrays first
+        X = X.astype(np.float32)
+        y = y.astype(np.float32)
         
-        # Ensure data is float32 and convert to torch tensors
-        self.X = np.array(self.X, dtype=np.float32)
-        self.y = np.array(self.y, dtype=np.float32)
+        # Check if data is already in sequence format
+        if len(X.shape) == 3:
+            # Data is already in sequence format [n_samples, seq_len, features]
+            self.X = torch.FloatTensor(X)
+            print(f"Input data already in sequence format: {X.shape}")
+        else:
+            # Data needs to be converted to sequences
+            self.X = torch.FloatTensor(X)
+            print(f"Converting input data to sequences: {X.shape}")
         
-        self.X = torch.tensor(self.X, dtype=torch.float32)
-        self.y = torch.tensor(self.y, dtype=torch.float32)
-        
-        logging.info(f"Loaded dataset: X shape {self.X.shape}, y shape {self.y.shape}")
+        if len(y.shape) == 3:
+            # Multi-step prediction targets [n_samples, horizon, targets]
+            self.y = torch.FloatTensor(y)
+            print(f"Target data in multi-step format: {y.shape}")
+        else:
+            # Single-step targets
+            self.y = torch.FloatTensor(y)
+            print(f"Target data in single-step format: {y.shape}")
     
     def __len__(self):
         return len(self.X)
@@ -47,353 +75,419 @@ class TimeSeriesDataset(Dataset):
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx]
 
-class TimeSeriesDataModule(L.LightningDataModule):
-    """Lightning DataModule for time series data."""
-    
-    def __init__(self, data_dir: str, batch_size: int = 32, num_workers: int = 4):
-        super().__init__()
-        self.data_dir = data_dir
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-    
-    def setup(self, stage=None):
-        if stage == 'fit' or stage is None:
-            self.train_dataset = TimeSeriesDataset(
-                os.path.join(self.data_dir, 'X_train.npy'),
-                os.path.join(self.data_dir, 'y_train.npy')
-            )
-            self.val_dataset = TimeSeriesDataset(
-                os.path.join(self.data_dir, 'X_val.npy'),
-                os.path.join(self.data_dir, 'y_val.npy')
-            )
-        if stage == 'test' or stage is None:
-            self.test_dataset = TimeSeriesDataset(
-                os.path.join(self.data_dir, 'X_test.npy'),
-                os.path.join(self.data_dir, 'y_test.npy')
-            )
-    
-    def train_dataloader(self):
-        return DataLoader(
-            self.train_dataset, 
-            batch_size=self.batch_size, 
-            shuffle=True, 
-            num_workers=self.num_workers,
-            persistent_workers=True
-        )
-    
-    def val_dataloader(self):
-        return DataLoader(
-            self.val_dataset, 
-            batch_size=self.batch_size, 
-            num_workers=self.num_workers,
-            persistent_workers=True
-        )
-    
-    def test_dataloader(self):
-        return DataLoader(
-            self.test_dataset, 
-            batch_size=self.batch_size, 
-            num_workers=self.num_workers,
-            persistent_workers=True
-        )
-
-class LSTMSurrogateModel(L.LightningModule):
+class LSTMSurrogateModel(pl.LightningModule):
     """LSTM-based surrogate model for time series prediction."""
     
-    def __init__(self, 
-                 input_dim: int,
-                 hidden_dim: int = 128,
-                 num_layers: int = 2,
-                 output_dim: int = 3,
-                 dropout: float = 0.2,
-                 learning_rate: float = 1e-3):
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int = 128,
+        num_layers: int = 2,
+        output_size: int = 1,
+        prediction_horizon: int = 24,
+        dropout: float = 0.2,
+        learning_rate: float = 1e-3,
+        sequence_length: int = 168
+    ):
         super().__init__()
         self.save_hyperparameters()
         
-        self.input_dim = input_dim
-        self.hidden_dim = hidden_dim
+        self.input_size = input_size
+        self.hidden_size = hidden_size
         self.num_layers = num_layers
-        self.output_dim = output_dim
+        self.output_size = output_size
+        self.prediction_horizon = prediction_horizon
         self.learning_rate = learning_rate
         
         # LSTM layers
         self.lstm = nn.LSTM(
-            input_size=input_dim,
-            hidden_size=hidden_dim,
+            input_size=input_size,
+            hidden_size=hidden_size,
             num_layers=num_layers,
             dropout=dropout if num_layers > 1 else 0,
-            batch_first=True,
-            bidirectional=True
+            batch_first=True
         )
         
-        # Output projection
-        self.output_projection = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),  # *2 for bidirectional
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, output_dim)
-        )
+        # Output layers for multi-step prediction
+        self.dropout = nn.Dropout(dropout)
+        self.fc = nn.Linear(hidden_size, prediction_horizon * output_size)
         
         # Loss function
-        self.loss_fn = nn.MSELoss()
+        self.criterion = nn.MSELoss()
         
-        # Metrics tracking
-        self.train_losses = []
-        self.val_losses = []
-    
     def forward(self, x):
-        # x shape: (batch_size, sequence_length, input_dim)
-        batch_size = x.size(0)
+        """Forward pass."""
+        # x shape: [batch_size, sequence_length, input_size]
+        lstm_out, (hidden, cell) = self.lstm(x)
         
-        # LSTM forward pass
-        lstm_out, _ = self.lstm(x)
-        # lstm_out shape: (batch_size, sequence_length, hidden_dim * 2)
+        # Use the last output
+        last_output = lstm_out[:, -1, :]  # [batch_size, hidden_size]
         
-        # Take the last output for prediction
-        last_output = lstm_out[:, -1, :]  # (batch_size, hidden_dim * 2)
+        # Apply dropout and final linear layer
+        output = self.dropout(last_output)
+        output = self.fc(output)  # [batch_size, prediction_horizon * output_size]
         
-        # Project to output dimension
-        output = self.output_projection(last_output)  # (batch_size, output_dim)
-        
-        # Repeat for each time step in the output window
-        # This is a simple approach - in practice you might want a more sophisticated decoder
-        output = output.unsqueeze(1).repeat(1, 24, 1)  # (batch_size, 24, output_dim)
+        # Reshape to [batch_size, prediction_horizon, output_size]
+        output = output.view(-1, self.prediction_horizon, self.output_size)
         
         return output
     
     def training_step(self, batch, batch_idx):
+        """Training step."""
         x, y = batch
         y_hat = self(x)
-        loss = self.loss_fn(y_hat, y)
+        loss = self.criterion(y_hat, y)
         
-        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
-        self.train_losses.append(loss.item())
-        
+        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
         return loss
     
     def validation_step(self, batch, batch_idx):
+        """Validation step."""
         x, y = batch
         y_hat = self(x)
-        loss = self.loss_fn(y_hat, y)
+        loss = self.criterion(y_hat, y)
         
-        self.log('val_loss', loss, on_epoch=True, prog_bar=True, logger=True)
-        self.val_losses.append(loss.item())
-        
-        return loss
+        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True)
+        return {'val_loss': loss, 'y_true': y, 'y_pred': y_hat}
     
     def test_step(self, batch, batch_idx):
+        """Test step."""
         x, y = batch
         y_hat = self(x)
-        loss = self.loss_fn(y_hat, y)
+        loss = self.criterion(y_hat, y)
         
-        self.log('test_loss', loss, on_epoch=True, logger=True)
-        
-        return loss
+        return {'test_loss': loss, 'y_true': y, 'y_pred': y_hat}
     
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.5, patience=3, verbose=True
+        """Configure optimizers."""
+        optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min', factor=0.5, patience=10, verbose=True
         )
         return {
             'optimizer': optimizer,
-            'lr_scheduler': {
-                'scheduler': scheduler,
-                'monitor': 'val_loss',
-            }
+            'lr_scheduler': scheduler,
+            'monitor': 'val_loss'
         }
 
-class GRUSurrogateModel(L.LightningModule):
-    """GRU-based surrogate model for time series prediction."""
+def load_preprocessed_data(data_dir: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Load preprocessed data."""
+    print("Loading preprocessed data...")
     
-    def __init__(self, 
-                 input_dim: int,
-                 hidden_dim: int = 128,
-                 num_layers: int = 2,
-                 output_dim: int = 3,
-                 dropout: float = 0.2,
-                 learning_rate: float = 1e-3):
-        super().__init__()
-        self.save_hyperparameters()
-        
-        self.input_dim = input_dim
-        self.hidden_dim = hidden_dim
-        self.num_layers = num_layers
-        self.output_dim = output_dim
-        self.learning_rate = learning_rate
-        
-        # GRU layers
-        self.gru = nn.GRU(
-            input_size=input_dim,
-            hidden_size=hidden_dim,
-            num_layers=num_layers,
-            dropout=dropout if num_layers > 1 else 0,
-            batch_first=True,
-            bidirectional=True
-        )
-        
-        # Output projection
-        self.output_projection = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, output_dim)
-        )
-        
-        # Loss function
-        self.loss_fn = nn.MSELoss()
+    X_train = np.load(data_dir / 'X_train.npy', allow_pickle=True)
+    X_val = np.load(data_dir / 'X_val.npy', allow_pickle=True)
+    X_test = np.load(data_dir / 'X_test.npy', allow_pickle=True)
+    y_train = np.load(data_dir / 'y_train.npy', allow_pickle=True)
+    y_val = np.load(data_dir / 'y_val.npy', allow_pickle=True)
+    y_test = np.load(data_dir / 'y_test.npy', allow_pickle=True)
     
-    def forward(self, x):
-        # x shape: (batch_size, sequence_length, input_dim)
-        
-        # GRU forward pass
-        gru_out, _ = self.gru(x)
-        # gru_out shape: (batch_size, sequence_length, hidden_dim * 2)
-        
-        # Take the last output for prediction
-        last_output = gru_out[:, -1, :]  # (batch_size, hidden_dim * 2)
-        
-        # Project to output dimension
-        output = self.output_projection(last_output)  # (batch_size, output_dim)
-        
-        # Repeat for each time step in the output window
-        output = output.unsqueeze(1).repeat(1, 24, 1)  # (batch_size, 24, output_dim)
-        
-        return output
+    print(f"Training data shape: X={X_train.shape}, y={y_train.shape}")
+    print(f"Validation data shape: X={X_val.shape}, y={y_val.shape}")
+    print(f"Test data shape: X={X_test.shape}, y={y_test.shape}")
     
-    def training_step(self, batch, batch_idx):
-        x, y = batch
-        y_hat = self(x)
-        loss = self.loss_fn(y_hat, y)
-        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
-        return loss
+    # Check data types and handle mixed types
+    print(f"X_train dtype: {X_train.dtype}")
+    print(f"y_train dtype: {y_train.dtype}")
     
-    def validation_step(self, batch, batch_idx):
-        x, y = batch
-        y_hat = self(x)
-        loss = self.loss_fn(y_hat, y)
-        self.log('val_loss', loss, on_epoch=True, prog_bar=True, logger=True)
-        return loss
+    # If data contains objects, we need to handle it differently
+    if X_train.dtype == 'object':
+        print("Warning: X_train contains object dtype, attempting to extract numeric data...")
+        # Try to extract only numeric columns
+        sample = X_train[0, 0, :]  # Get first sample, first timestep, all features
+        print(f"Sample features: {sample}")
+        
+        # Find numeric indices
+        numeric_indices = []
+        for i, val in enumerate(sample):
+            try:
+                float(val)
+                numeric_indices.append(i)
+            except (ValueError, TypeError):
+                print(f"Skipping non-numeric feature at index {i}: {val}")
+        
+        print(f"Found {len(numeric_indices)} numeric features out of {len(sample)}")
+        
+        # Extract only numeric features
+        X_train = X_train[:, :, numeric_indices].astype(np.float32)
+        X_val = X_val[:, :, numeric_indices].astype(np.float32)
+        X_test = X_test[:, :, numeric_indices].astype(np.float32)
     
-    def test_step(self, batch, batch_idx):
-        x, y = batch
-        y_hat = self(x)
-        loss = self.loss_fn(y_hat, y)
-        self.log('test_loss', loss, on_epoch=True, logger=True)
-        return loss
+    return X_train, X_val, X_test, y_train, y_val, y_test
+
+def create_data_loaders(
+    X_train: np.ndarray, 
+    X_val: np.ndarray, 
+    X_test: np.ndarray,
+    y_train: np.ndarray, 
+    y_val: np.ndarray, 
+    y_test: np.ndarray,
+    sequence_length: int = 168,
+    batch_size: int = 32
+) -> Tuple[DataLoader, DataLoader, DataLoader]:
+    """Create data loaders for training."""
+    print(f"Creating data loaders with sequence length: {sequence_length}")
     
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.5, patience=3, verbose=True
-        )
-        return {
-            'optimizer': optimizer,
-            'lr_scheduler': {
-                'scheduler': scheduler,
-                'monitor': 'val_loss',
-            }
-        }
+    # Create datasets
+    train_dataset = TimeSeriesDataset(X_train, y_train, sequence_length)
+    val_dataset = TimeSeriesDataset(X_val, y_val, sequence_length)
+    test_dataset = TimeSeriesDataset(X_test, y_test, sequence_length)
+    
+    print(f"Dataset sizes: train={len(train_dataset)}, val={len(val_dataset)}, test={len(test_dataset)}")
+    
+    # Create data loaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    
+    return train_loader, val_loader, test_loader
+
+def evaluate_model(model: LSTMSurrogateModel, test_loader: DataLoader, device: str) -> Tuple[Dict[str, float], np.ndarray, np.ndarray]:
+    """Evaluate model on test data."""
+    model.eval()
+    all_predictions = []
+    all_targets = []
+    
+    with torch.no_grad():
+        for batch in test_loader:
+            x, y = batch
+            x, y = x.to(device), y.to(device)
+            
+            y_pred = model(x)
+            
+            all_predictions.append(y_pred.cpu().numpy())
+            all_targets.append(y.cpu().numpy())
+    
+    # Concatenate all predictions and targets
+    predictions = np.concatenate(all_predictions, axis=0)
+    targets = np.concatenate(all_targets, axis=0)
+    
+    # Flatten the arrays for metrics
+    predictions_flat = predictions.flatten()
+    targets_flat = targets.flatten()
+    
+    # Calculate metrics
+    mae = mean_absolute_error(targets_flat, predictions_flat)
+    mse = mean_squared_error(targets_flat, predictions_flat)
+    rmse = np.sqrt(mse)
+    
+    # Calculate R²
+    ss_res = np.sum((targets_flat - predictions_flat) ** 2)
+    ss_tot = np.sum((targets_flat - np.mean(targets_flat)) ** 2)
+    r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+    
+    metrics = {
+        'mae': float(mae),
+        'mse': float(mse),
+        'rmse': float(rmse),
+        'r2': float(r2)
+    }
+    
+    return metrics, predictions_flat, targets_flat
+
+def plot_predictions(predictions: np.ndarray, targets: np.ndarray, save_path: Path):
+    """Plot predictions vs targets."""
+    plt.figure(figsize=(15, 10))
+    
+    # Scatter plot
+    plt.subplot(2, 2, 1)
+    plt.scatter(targets, predictions, alpha=0.5)
+    plt.plot([targets.min(), targets.max()], [targets.min(), targets.max()], 'r--', lw=2)
+    plt.xlabel('True Values')
+    plt.ylabel('Predictions')
+    plt.title('Predictions vs True Values')
+    
+    # Residuals plot
+    plt.subplot(2, 2, 2)
+    residuals = targets - predictions
+    plt.scatter(predictions, residuals, alpha=0.5)
+    plt.axhline(y=0, color='r', linestyle='--')
+    plt.xlabel('Predictions')
+    plt.ylabel('Residuals')
+    plt.title('Residuals Plot')
+    
+    # Time series plot (first 1000 points)
+    plt.subplot(2, 2, 3)
+    n_points = min(1000, len(targets))
+    plt.plot(targets[:n_points], label='True', alpha=0.7)
+    plt.plot(predictions[:n_points], label='Predicted', alpha=0.7)
+    plt.xlabel('Time Steps')
+    plt.ylabel('Values')
+    plt.title('Time Series Comparison (First 1000 points)')
+    plt.legend()
+    
+    # Distribution comparison
+    plt.subplot(2, 2, 4)
+    plt.hist(targets, bins=50, alpha=0.5, label='True', density=True)
+    plt.hist(predictions, bins=50, alpha=0.5, label='Predicted', density=True)
+    plt.xlabel('Values')
+    plt.ylabel('Density')
+    plt.title('Distribution Comparison')
+    plt.legend()
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
 
 def main():
     """Main training function."""
-    L.seed_everything(42)
+    parser = argparse.ArgumentParser(description='Train surrogate sequence model')
+    parser.add_argument('--data_dir', type=str, default='data/processed', help='Data directory')
+    parser.add_argument('--output_dir', type=str, default='models', help='Output directory')
+    parser.add_argument('--sequence_length', type=int, default=168, help='Sequence length (hours)')
+    parser.add_argument('--hidden_size', type=int, default=128, help='LSTM hidden size')
+    parser.add_argument('--num_layers', type=int, default=2, help='Number of LSTM layers')
+    parser.add_argument('--dropout', type=float, default=0.2, help='Dropout rate')
+    parser.add_argument('--learning_rate', type=float, default=1e-3, help='Learning rate')
+    parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
+    parser.add_argument('--max_epochs', type=int, default=50, help='Maximum epochs')
+    parser.add_argument('--use_wandb', action='store_true', help='Use Weights & Biases logging')
     
-    # --- Configuration ---
-    DATA_DIR = 'data/processed'
-    MODEL_OUTPUT_DIR = 'models'
-    BATCH_SIZE = 64
-    LEARNING_RATE = 1e-3
-    EPOCHS = 50
-    MODEL_TYPE = 'lstm'  # 'lstm' or 'gru'
+    args = parser.parse_args()
     
-    # Load data to determine dimensions
-    X_train = np.load(os.path.join(DATA_DIR, 'X_train.npy'), allow_pickle=True)
-    y_train = np.load(os.path.join(DATA_DIR, 'y_train.npy'), allow_pickle=True)
+    # Set up paths
+    project_root = Path(__file__).parent.parent.parent
+    data_dir = project_root / args.data_dir
+    output_dir = project_root / args.output_dir
+    output_dir.mkdir(exist_ok=True)
     
-    input_dim = X_train.shape[2]  # Number of features
-    output_dim = y_train.shape[2]  # Number of targets
+    # Load data
+    X_train, X_val, X_test, y_train, y_val, y_test = load_preprocessed_data(data_dir)
     
-    logging.info(f"Input dimension: {input_dim}")
-    logging.info(f"Output dimension: {output_dim}")
-    logging.info(f"Sequence length: {X_train.shape[1]}")
-    logging.info(f"Prediction horizon: {y_train.shape[1]}")
+    # Create data loaders
+    train_loader, val_loader, test_loader = create_data_loaders(
+        X_train, X_val, X_test, y_train, y_val, y_test,
+        sequence_length=args.sequence_length,
+        batch_size=args.batch_size
+    )
     
-    # --- Setup ---
-    data_module = TimeSeriesDataModule(data_dir=DATA_DIR, batch_size=BATCH_SIZE)
-    
-    # Choose model type
-    if MODEL_TYPE == 'lstm':
-        model = LSTMSurrogateModel(
-            input_dim=input_dim,
-            output_dim=output_dim,
-            learning_rate=LEARNING_RATE
-        )
+    # Get input and output dimensions
+    input_size = X_train.shape[2]  # Features dimension
+    if len(y_train.shape) == 3:
+        prediction_horizon = y_train.shape[1]  # Time steps to predict
+        output_size = y_train.shape[2]  # Number of targets
     else:
-        model = GRUSurrogateModel(
-            input_dim=input_dim,
-            output_dim=output_dim,
-            learning_rate=LEARNING_RATE
+        prediction_horizon = 1
+        output_size = y_train.shape[1] if len(y_train.shape) > 1 else 1
+    
+    print(f"Model configuration:")
+    print(f"  Input size: {input_size}")
+    print(f"  Output size: {output_size}")
+    print(f"  Prediction horizon: {prediction_horizon}")
+    print(f"  Hidden size: {args.hidden_size}")
+    print(f"  Num layers: {args.num_layers}")
+    print(f"  Sequence length: {args.sequence_length}")
+    
+    # Initialize model
+    model = LSTMSurrogateModel(
+        input_size=input_size,
+        hidden_size=args.hidden_size,
+        num_layers=args.num_layers,
+        output_size=output_size,
+        prediction_horizon=prediction_horizon,
+        dropout=args.dropout,
+        learning_rate=args.learning_rate,
+        sequence_length=args.sequence_length
+    )
+    
+    # Set up callbacks
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=output_dir,
+        filename='surrogate-model-{epoch:02d}-{val_loss:.2f}',
+        monitor='val_loss',
+        mode='min',
+        save_top_k=1,
+        save_last=True
+    )
+    
+    early_stopping = EarlyStopping(
+        monitor='val_loss',
+        patience=15,
+        mode='min',
+        verbose=True
+    )
+    
+    callbacks = [checkpoint_callback, early_stopping]
+    
+    # Set up logger
+    logger = None
+    if args.use_wandb:
+        logger = WandbLogger(
+            project="rl-bem-surrogate",
+            name="lstm-surrogate-model",
+            save_dir=str(project_root / "wandb")
         )
     
-    # --- Callbacks ---
-    checkpoint_callback = ModelCheckpoint(
-        dirpath=MODEL_OUTPUT_DIR,
-        filename=f'{MODEL_TYPE}-surrogate-{{epoch:02d}}-{{val_loss:.4f}}',
-        save_top_k=3,
-        verbose=True,
-        monitor='val_loss',
-        mode='min'
-    )
-    
-    early_stop_callback = EarlyStopping(
-        monitor='val_loss',
-        patience=10,
-        verbose=True,
-        mode='min'
-    )
-    
-    # --- Logger ---
-    logger = CSVLogger('logs', name=f'{MODEL_TYPE}_surrogate')
-    
-    # --- Training ---
-    trainer = L.Trainer(
-        max_epochs=EPOCHS,
-        callbacks=[checkpoint_callback, early_stop_callback],
+    # Initialize trainer
+    trainer = pl.Trainer(
+        max_epochs=args.max_epochs,
+        callbacks=callbacks,
         logger=logger,
         accelerator='auto',
         devices='auto',
-        precision='16-mixed' if torch.cuda.is_available() else '32',
-        gradient_clip_val=1.0,
-        accumulate_grad_batches=2
+        log_every_n_steps=50,
+        val_check_interval=0.25,
+        gradient_clip_val=1.0
     )
     
-    # Train the model
-    trainer.fit(model, data_module)
+    # Train model
+    print("Starting training...")
+    trainer.fit(model, train_loader, val_loader)
     
-    # Test the model
-    trainer.test(model, datamodule=data_module)
+    # Load best model
+    best_model_path = checkpoint_callback.best_model_path
+    print(f"Loading best model from: {best_model_path}")
+    model = LSTMSurrogateModel.load_from_checkpoint(best_model_path)
     
-    # Save final model
-    final_model_path = os.path.join(MODEL_OUTPUT_DIR, f'{MODEL_TYPE}_surrogate_final.ckpt')
-    trainer.save_checkpoint(final_model_path)
-    logging.info(f"Final model saved to {final_model_path}")
+    # Evaluate on test set
+    print("Evaluating on test set...")
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model = model.to(device)
     
-    # Save model configuration
-    config = {
-        'model_type': MODEL_TYPE,
-        'input_dim': input_dim,
-        'output_dim': output_dim,
-        'sequence_length': X_train.shape[1],
-        'prediction_horizon': y_train.shape[1],
-        'hyperparameters': model.hparams
+    metrics, predictions, targets = evaluate_model(model, test_loader, device)
+    
+    print("\nTest Results:")
+    print(f"  MAE: {metrics['mae']:.4f}")
+    print(f"  MSE: {metrics['mse']:.4f}")
+    print(f"  RMSE: {metrics['rmse']:.4f}")
+    print(f"  R²: {metrics['r2']:.4f}")
+    
+    # Save results
+    results = {
+        'metrics': metrics,
+        'model_config': {
+            'input_size': input_size,
+            'hidden_size': args.hidden_size,
+            'num_layers': args.num_layers,
+            'output_size': output_size,
+            'sequence_length': args.sequence_length,
+            'dropout': args.dropout,
+            'learning_rate': args.learning_rate
+        },
+        'training_config': {
+            'batch_size': args.batch_size,
+            'max_epochs': args.max_epochs,
+            'best_epoch': trainer.current_epoch
+        }
     }
     
-    config_path = os.path.join(MODEL_OUTPUT_DIR, f'{MODEL_TYPE}_surrogate_config.json')
-    with open(config_path, 'w') as f:
-        json.dump(config, f, indent=2, default=str)
+    with open(output_dir / 'training_results.pkl', 'wb') as f:
+        pickle.dump(results, f)
     
-    logging.info(f"Model configuration saved to {config_path}")
+    # Plot results
+    plot_predictions(predictions, targets, output_dir / 'prediction_plots.png')
+    
+    # Save final model
+    final_model_path = output_dir / 'surrogate_model_final.ckpt'
+    trainer.save_checkpoint(final_model_path)
+    print(f"Final model saved to: {final_model_path}")
+    
+    # Log to wandb if enabled
+    if args.use_wandb:
+        wandb.log(metrics)
+        wandb.log({"prediction_plot": wandb.Image(str(output_dir / 'prediction_plots.png'))})
+        wandb.finish()
+    
+    print("Training completed successfully!")
 
-if __name__ == '__main__':
-    main() 
+if __name__ == "__main__":
+    main()

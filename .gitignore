@@ -50,13 +50,11 @@ coverage.xml
 .ipynb_checkpoints
 
 # Environments
-.env
-.venv
-env/
+RL-BEM/
 venv/
-ENV/
-env.bak/
-venv.bak/
+.venv/
+env/
+.env
 
 # IDE settings
 .idea/
@@ -76,4 +74,22 @@ reports/
 .Spotlight-V100
 .Trashes
 ehthumbs.db
-Thumbs.db 
+Thumbs.db
+
+# Logs
+logs/
+*.log
+lightning_logs/
+wandb/
+
+# Data
+*.csv
+*.parquet
+data/raw/
+temp_downloads/
+
+# IDE / Editor specific
+.vscode/
+.idea/
+*.swp
+*~ 
