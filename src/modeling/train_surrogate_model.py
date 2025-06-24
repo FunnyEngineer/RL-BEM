@@ -160,7 +160,7 @@ class LSTMSurrogateModel(pl.LightningModule):
     
     def configure_optimizers(self):
         """Configure optimizers."""
-        optimizer = optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=1e-4)
+        optimizer = optim.AdamW(self.parameters(), lr=self.learning_rate)
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='min', factor=0.5, patience=10, verbose=True
         )
@@ -297,45 +297,58 @@ def evaluate_model(model: LSTMSurrogateModel, test_loader: DataLoader, device: s
     return metrics, predictions_flat, targets_flat
 
 def plot_predictions(predictions: np.ndarray, targets: np.ndarray, save_path: Path):
-    """Plot predictions vs targets."""
-    plt.figure(figsize=(15, 10))
-    
-    # Scatter plot
-    plt.subplot(2, 2, 1)
-    plt.scatter(targets, predictions, alpha=0.5)
-    plt.plot([targets.min(), targets.max()], [targets.min(), targets.max()], 'r--', lw=2)
-    plt.xlabel('True Values')
-    plt.ylabel('Predictions')
-    plt.title('Predictions vs True Values')
-    
-    # Residuals plot
-    plt.subplot(2, 2, 2)
-    residuals = targets - predictions
-    plt.scatter(predictions, residuals, alpha=0.5)
-    plt.axhline(y=0, color='r', linestyle='--')
-    plt.xlabel('Predictions')
-    plt.ylabel('Residuals')
-    plt.title('Residuals Plot')
-    
-    # Time series plots: summer and winter
-    plt.subplot(2, 2, 3)
-    # For annual data (8760 hours), use a large gap and 5-day window (120 hours)
-    winter_start, winter_end = 100, 220  # Early in the year
-    summer_start, summer_end = 4400, 4520  # Middle of the year
-    plt.plot(targets[winter_start:winter_end], label='True (Winter)', alpha=0.7, color='blue')
-    plt.plot(predictions[winter_start:winter_end], label='Predicted (Winter)', alpha=0.7, color='cyan')
-    plt.xlabel('Time Steps')
-    plt.ylabel('Values')
-    plt.title('Winter Comparison')
-    plt.legend()
+    """Plot predictions vs targets in a 2x2 grid as in the provided screenshot."""
+    import matplotlib.gridspec as gridspec
+    plt.figure(figsize=(18, 12))
+    gs = gridspec.GridSpec(2, 2, height_ratios=[1, 1.2])
 
-    plt.subplot(2, 2, 4)
-    plt.plot(targets[summer_start:summer_end], label='True (Summer)', alpha=0.7, color='red')
-    plt.plot(predictions[summer_start:summer_end], label='Predicted (Summer)', alpha=0.7, color='orange')
-    plt.xlabel('Time Steps')
-    plt.ylabel('Values')
-    plt.title('Summer Comparison')
-    plt.legend()
+    # Top left: Predictions vs True Values
+    ax1 = plt.subplot(gs[0, 0])
+    ax1.scatter(targets, predictions, alpha=0.5)
+    min_val = min(targets.min(), predictions.min())
+    max_val = max(targets.max(), predictions.max())
+    ax1.plot([min_val, max_val], [min_val, max_val], 'r--', lw=2)
+    ax1.set_xlabel('True Values')
+    ax1.set_ylabel('Predictions')
+    ax1.set_title('Predictions vs True Values')
+
+    # Top right: Residuals Plot
+    ax2 = plt.subplot(gs[0, 1])
+    residuals = predictions - targets
+    ax2.scatter(predictions, residuals, alpha=0.5)
+    ax2.axhline(y=0, color='r', linestyle='--')
+    ax2.set_xlabel('Predictions')
+    ax2.set_ylabel('Residuals')
+    ax2.set_title('Residuals Plot')
+
+    # Bottom left: Two vertically stacked time series (Summer and Winter)
+    gs_left = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=gs[1, 0], hspace=0.3)
+    # Summer
+    summer_start, summer_end = 4400, 4520
+    ax3a = plt.subplot(gs_left[0])
+    ax3a.plot(targets[summer_start:summer_end], label='True (Summer)', color='red', alpha=0.7)
+    ax3a.plot(predictions[summer_start:summer_end], label='Predicted (Summer)', color='orange', alpha=0.7)
+    ax3a.set_title('Summer Comparison')
+    ax3a.set_ylabel('Values')
+    ax3a.legend(fontsize=8)
+    # Winter
+    winter_start, winter_end = 100, 220
+    ax3b = plt.subplot(gs_left[1])
+    ax3b.plot(targets[winter_start:winter_end], label='True (Winter)', color='blue', alpha=0.7)
+    ax3b.plot(predictions[winter_start:winter_end], label='Predicted (Winter)', color='cyan', alpha=0.7)
+    ax3b.set_title('Winter Comparison')
+    ax3b.set_xlabel('Time Steps')
+    ax3b.set_ylabel('Values')
+    ax3b.legend(fontsize=8)
+
+    # Bottom right: Distribution Comparison (histogram)
+    ax4 = plt.subplot(gs[1, 1])
+    ax4.hist(targets, bins=40, alpha=0.6, label='True', density=True)
+    ax4.hist(predictions, bins=40, alpha=0.6, label='Predicted', density=True)
+    ax4.set_xlabel('Values')
+    ax4.set_ylabel('Density')
+    ax4.set_title('Distribution Comparison')
+    ax4.legend()
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -350,7 +363,7 @@ def main():
     parser.add_argument('--hidden_size', type=int, default=128, help='LSTM hidden size')
     parser.add_argument('--num_layers', type=int, default=2, help='Number of LSTM layers')
     parser.add_argument('--dropout', type=float, default=0.2, help='Dropout rate')
-    parser.add_argument('--learning_rate', type=float, default=1e-3, help='Learning rate')
+    parser.add_argument('--learning_rate', type=float, default=5e-4, help='Learning rate')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
     parser.add_argument('--max_epochs', type=int, default=50, help='Maximum epochs')
     parser.add_argument('--no-wandb', dest='use_wandb', action='store_false', help='Disable Weights & Biases logging')
@@ -407,7 +420,7 @@ def main():
     # Set up callbacks
     checkpoint_callback = ModelCheckpoint(
         dirpath=output_dir,
-        filename='surrogate-model-{epoch:02d}-{val_loss:.2f}',
+        filename='surrogate-model-{epoch:02d}-{val_loss:.4f}',
         monitor='val_loss',
         mode='min',
         save_top_k=1,
