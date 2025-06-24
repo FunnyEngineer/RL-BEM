@@ -87,7 +87,8 @@ class LSTMSurrogateModel(pl.LightningModule):
         prediction_horizon: int = 24,
         dropout: float = 0.2,
         learning_rate: float = 1e-3,
-        sequence_length: int = 168
+        sequence_length: int = 168,
+        lstm_bidirectional: bool = True
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -98,19 +99,21 @@ class LSTMSurrogateModel(pl.LightningModule):
         self.output_size = output_size
         self.prediction_horizon = prediction_horizon
         self.learning_rate = learning_rate
+        self.lstm_bidirectional = lstm_bidirectional
         
         # LSTM layers
         self.lstm = nn.LSTM(
             input_size=input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
+            bidirectional=lstm_bidirectional,
             dropout=dropout if num_layers > 1 else 0,
             batch_first=True
         )
         
         # Output layers for multi-step prediction
         self.dropout = nn.Dropout(dropout)
-        self.fc = nn.Linear(hidden_size, prediction_horizon * output_size)
+        self.fc = nn.Linear(hidden_size * (2 if lstm_bidirectional else 1), output_size)
         
         # Loss function
         self.criterion = nn.MSELoss()
@@ -119,16 +122,9 @@ class LSTMSurrogateModel(pl.LightningModule):
         """Forward pass."""
         # x shape: [batch_size, sequence_length, input_size]
         lstm_out, (hidden, cell) = self.lstm(x)
-        
-        # Use the last output
-        last_output = lstm_out[:, -1, :]  # [batch_size, hidden_size]
-        
         # Apply dropout and final linear layer
-        output = self.dropout(last_output)
-        output = self.fc(output)  # [batch_size, prediction_horizon * output_size]
-        
-        # Reshape to [batch_size, prediction_horizon, output_size]
-        output = output.view(-1, self.prediction_horizon, self.output_size)
+        output = self.dropout(lstm_out) # [batch_size, sequence_length, hidden_size * 2]
+        output = self.fc(output)  # [batch_size, prediction_horizon,  output_size]
         
         return output
     
