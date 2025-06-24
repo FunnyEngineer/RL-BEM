@@ -46,7 +46,17 @@ class TimeSeriesDataPreprocessor:
         """Load and combine multiple building time series data files."""
         files = glob.glob(os.path.join(timeseries_dir, '*.parquet'))
         logging.info(f"Loading and combining {len(files)} building time series files...")
-        all_dfs = [pd.read_parquet(file) for file in tqdm(files, desc="Loading building time series")]
+        
+        all_dfs = []
+        for file in tqdm(files, desc="Loading building time series"):
+            # Extract building ID from filename (e.g., "4-0.parquet" -> 4)
+            filename = os.path.basename(file)
+            building_id = int(filename.split('-')[0])
+            
+            df = pd.read_parquet(file)
+            df['bldg_id'] = building_id  # Add building ID column
+            all_dfs.append(df)
+            
         combined_df = pd.concat(all_dfs, ignore_index=True)
         combined_df['timestamp'] = pd.to_datetime(combined_df['timestamp'])
         logging.info(f"Combined building time series data shape: {combined_df.shape}")
@@ -76,7 +86,7 @@ class TimeSeriesDataPreprocessor:
         return combined_weather_df
 
     def load_schedule_data(self, schedule_dir: str, building_ids: pd.Series) -> pd.DataFrame:
-        """Load and combine schedule data for all relevant buildings."""
+        """Load and combine schedule data for all relevant buildings, upsampling to 15-min intervals if needed."""
         logging.info(f"Loading schedule data for {len(building_ids)} buildings...")
         
         schedule_dfs = []
@@ -85,17 +95,31 @@ class TimeSeriesDataPreprocessor:
             schedule_file = Path(schedule_dir) / f"{bldg_id_formatted}_schedules.csv"
             if schedule_file.exists():
                 df = pd.read_csv(schedule_file, index_col=0)
-                # Schedules are hourly for a year, need to create timestamps
-                start_date = '2018-01-01 01:00:00'
-                end_date = '2019-01-01 00:00:00'
-                df['timestamp'] = pd.to_datetime(pd.date_range(start=start_date, end=end_date, freq='h'))
-                df['bldg_id'] = bldg_id
-                schedule_dfs.append(df)
-
+                n_rows = len(df)
+                if n_rows == 8760:
+                    # Hourly schedule, upsample to 15-min intervals (35040 rows)
+                    start_date = '2018-01-01 00:00:00'
+                    hourly_index = pd.date_range(start=start_date, periods=8760, freq='H')
+                    df['timestamp'] = hourly_index
+                    df['bldg_id'] = bldg_id
+                    # Set timestamp as index for upsampling
+                    df = df.set_index('timestamp')
+                    # Upsample to 15-min intervals using forward fill
+                    df_upsampled = df.resample('15T').ffill().reset_index()
+                    schedule_dfs.append(df_upsampled)
+                elif n_rows == 35040:
+                    # Already 15-min intervals
+                    start_date = '2018-01-01 00:00:00'
+                    fifteen_min_index = pd.date_range(start=start_date, periods=35040, freq='15T')
+                    df['timestamp'] = fifteen_min_index
+                    df['bldg_id'] = bldg_id
+                    schedule_dfs.append(df)
+                else:
+                    logging.warning(f"Schedule file {schedule_file} has unexpected number of rows: {n_rows}")
+                    continue
         if not schedule_dfs:
             logging.warning("No schedule data found.")
             return pd.DataFrame()
-
         combined_schedule_df = pd.concat(schedule_dfs, ignore_index=True)
         logging.info(f"Combined schedule data shape: {combined_schedule_df.shape}")
         return combined_schedule_df
@@ -198,8 +222,8 @@ class TimeSeriesDataPreprocessor:
         logging.info(f"Encoding and scaling features (fit={fit})")
         df_copy = df.copy()
         
-        # Identify categorical and numerical columns from config
-        categorical_cols = [col for col in self.config.get('static_features', []) if col in df_copy.columns and df_copy[col].dtype == 'object']
+        # Identify all object-type columns (categorical)
+        categorical_cols = [col for col in df_copy.columns if df_copy[col].dtype == 'object']
         numerical_cols = [col for col in df_copy.columns if pd.api.types.is_numeric_dtype(df_copy[col]) and col not in ['bldg_id', 'timestamp']]
         
         # One-Hot Encode categorical features
@@ -208,7 +232,7 @@ class TimeSeriesDataPreprocessor:
             for col in categorical_cols:
                 ohe = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
                 transformed = ohe.fit_transform(df_copy[[col]])
-                ohe_df = pd.DataFrame(transformed, columns=ohe.get_feature_names_out([col]))
+                ohe_df = pd.DataFrame(transformed, columns=ohe.get_feature_names_out([col]), index=df_copy.index)
                 df_copy = pd.concat([df_copy.drop(col, axis=1), ohe_df], axis=1)
                 self.one_hot_encoders[col] = ohe
         else:
@@ -216,9 +240,12 @@ class TimeSeriesDataPreprocessor:
                 if col in self.one_hot_encoders:
                     ohe = self.one_hot_encoders[col]
                     transformed = ohe.transform(df_copy[[col]])
-                    ohe_df = pd.DataFrame(transformed, columns=ohe.get_feature_names_out([col]))
+                    ohe_df = pd.DataFrame(transformed, columns=ohe.get_feature_names_out([col]), index=df_copy.index)
                     df_copy = pd.concat([df_copy.drop(col, axis=1), ohe_df], axis=1)
-
+        
+        # Drop any remaining object columns (safety)
+        df_copy = df_copy.select_dtypes(exclude=['object'])
+        
         # Scale numerical features
         if fit:
             scaler = MinMaxScaler()
@@ -226,7 +253,7 @@ class TimeSeriesDataPreprocessor:
             self.scalers['features'] = scaler
         elif 'features' in self.scalers:
             df_copy[numerical_cols] = self.scalers['features'].transform(df_copy[numerical_cols])
-            
+        
         return df_copy
 
     def create_windows_for_buildings(self, df: pd.DataFrame, 
@@ -240,17 +267,18 @@ class TimeSeriesDataPreprocessor:
         all_X, all_y = [], []
         
         target_cols = self.config.get('primary_target', []) + self.config.get('secondary_targets', [])
-        # Ensure all columns are numeric before creating windows
-        df_numeric = df.drop(columns=['bldg_id', 'timestamp']).apply(pd.to_numeric)
+        # Only use numeric columns for window creation
+        df_numeric = df.drop(columns=['bldg_id', 'timestamp'])
+        df_numeric = df_numeric.select_dtypes(include=[np.number])
         feature_cols = [col for col in df_numeric.columns if col not in target_cols]
 
         for building_id in tqdm(building_ids, desc="Creating windows"):
             building_df = df[df['bldg_id'] == building_id].sort_values(by='timestamp')
             if len(building_df) < input_window + output_window: continue
 
-            building_numeric_df = building_df.drop(columns=['bldg_id', 'timestamp']).apply(pd.to_numeric)
+            building_numeric_df = building_df.drop(columns=['bldg_id', 'timestamp']).select_dtypes(include=[np.number])
             X_data = building_numeric_df[feature_cols].to_numpy()
-            y_data = building_numeric_df[target_cols].to_numpy()
+            y_data = building_numeric_df[[col for col in target_cols if col in building_numeric_df.columns]].to_numpy()
 
             for i in range(0, len(building_df) - input_window - output_window + 1, step):
                 all_X.append(X_data[i:i + input_window])
@@ -292,8 +320,13 @@ def main():
     # --- Load Data ---
     metadata_df = preprocessor.load_metadata(os.path.join(raw_data_dir, 'metadata', 'TX_baseline_metadata_and_annual_results.parquet'))
     building_df = preprocessor.load_building_timeseries(os.path.join(raw_data_dir, 'building_timeseries'))
+    
+    # Get building IDs from timeseries data
+    building_ids = building_df['bldg_id'].unique()
+    logging.info(f"Found {len(building_ids)} buildings with timeseries data")
+    
     weather_df = preprocessor.load_weather_data(os.path.join(raw_data_dir, 'weather'), metadata_df)
-    schedule_df = preprocessor.load_schedule_data(os.path.join(raw_data_dir, 'schedules'), metadata_df['bldg_id'])
+    schedule_df = preprocessor.load_schedule_data(os.path.join(raw_data_dir, 'schedules'), pd.Series(building_ids))
 
     # --- Merge and Process ---
     merged_df = preprocessor.merge_data(building_df, metadata_df, weather_df, schedule_df)

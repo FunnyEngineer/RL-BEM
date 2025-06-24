@@ -24,6 +24,32 @@
     "out.outdoor_air_dryblub_temp.c",
     "timestamp"
   ],
+  "weather_features": [
+    "Dry Bulb Temperature [°C]",
+    "Relative Humidity [%]",
+    "Wind Speed [m/s]",
+    "Wind Direction [Deg]",
+    "Global Horizontal Radiation [W/m2]",
+    "Direct Normal Radiation [W/m2]",
+    "Diffuse Horizontal Radiation [W/m2]"
+  ],
+  "schedule_features": [
+    "occupants",
+    "lighting_interior",
+    "lighting_garage",
+    "cooking_range",
+    "dishwasher",
+    "clothes_washer",
+    "clothes_dryer",
+    "ceiling_fan",
+    "plug_loads_other",
+    "plug_loads_tv",
+    "hot_water_dishwasher",
+    "hot_water_clothes_washer",
+    "hot_water_fixtures",
+    "Vacancy",
+    "Power Outage"
+  ],
   "energy_features": [
     "out.electricity.cooling.energy_consumption",
     "out.electricity.heating.energy_consumption",
