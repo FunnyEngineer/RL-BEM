@@ -160,7 +160,7 @@ class LSTMSurrogateModel(pl.LightningModule):
     
     def configure_optimizers(self):
         """Configure optimizers."""
-        optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
+        optimizer = optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=1e-4)
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='min', factor=0.5, patience=10, verbose=True
         )
@@ -211,6 +211,18 @@ def load_preprocessed_data(data_dir: Path) -> Tuple[np.ndarray, np.ndarray, np.n
         X_train = X_train[:, :, numeric_indices].astype(np.float32)
         X_val = X_val[:, :, numeric_indices].astype(np.float32)
         X_test = X_test[:, :, numeric_indices].astype(np.float32)
+    
+    # Data scaling check (simple mean/std check)
+    train_mean, train_std = X_train.mean(), X_train.std()
+    val_mean, val_std = X_val.mean(), X_val.std()
+    test_mean, test_std = X_test.mean(), X_test.std()
+    print(f"Train mean/std: {train_mean:.4f}/{train_std:.4f}")
+    print(f"Val mean/std: {val_mean:.4f}/{val_std:.4f}")
+    print(f"Test mean/std: {test_mean:.4f}/{test_std:.4f}")
+    if not (np.isclose(train_mean, val_mean, atol=1e-2) and np.isclose(train_std, val_std, atol=1e-2)):
+        print("Warning: Validation set scaling differs from training set! Check your preprocessing.")
+    if not (np.isclose(train_mean, test_mean, atol=1e-2) and np.isclose(train_std, test_std, atol=1e-2)):
+        print("Warning: Test set scaling differs from training set! Check your preprocessing.")
     
     return X_train, X_val, X_test, y_train, y_val, y_test
 
@@ -305,25 +317,26 @@ def plot_predictions(predictions: np.ndarray, targets: np.ndarray, save_path: Pa
     plt.ylabel('Residuals')
     plt.title('Residuals Plot')
     
-    # Time series plot (first 1000 points)
+    # Time series plots: summer and winter
     plt.subplot(2, 2, 3)
-    n_points = min(1000, len(targets))
-    plt.plot(targets[:n_points], label='True', alpha=0.7)
-    plt.plot(predictions[:n_points], label='Predicted', alpha=0.7)
+    # For annual data (8760 hours), use a large gap and 5-day window (120 hours)
+    winter_start, winter_end = 100, 220  # Early in the year
+    summer_start, summer_end = 4400, 4520  # Middle of the year
+    plt.plot(targets[winter_start:winter_end], label='True (Winter)', alpha=0.7, color='blue')
+    plt.plot(predictions[winter_start:winter_end], label='Predicted (Winter)', alpha=0.7, color='cyan')
     plt.xlabel('Time Steps')
     plt.ylabel('Values')
-    plt.title('Time Series Comparison (First 1000 points)')
+    plt.title('Winter Comparison')
     plt.legend()
-    
-    # Distribution comparison
+
     plt.subplot(2, 2, 4)
-    plt.hist(targets, bins=50, alpha=0.5, label='True', density=True)
-    plt.hist(predictions, bins=50, alpha=0.5, label='Predicted', density=True)
-    plt.xlabel('Values')
-    plt.ylabel('Density')
-    plt.title('Distribution Comparison')
+    plt.plot(targets[summer_start:summer_end], label='True (Summer)', alpha=0.7, color='red')
+    plt.plot(predictions[summer_start:summer_end], label='Predicted (Summer)', alpha=0.7, color='orange')
+    plt.xlabel('Time Steps')
+    plt.ylabel('Values')
+    plt.title('Summer Comparison')
     plt.legend()
-    
+
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()
