@@ -340,15 +340,17 @@ def main():
     parser.add_argument('--learning_rate', type=float, default=1e-3, help='Learning rate')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
     parser.add_argument('--max_epochs', type=int, default=50, help='Maximum epochs')
-    parser.add_argument('--use_wandb', action='store_true', help='Use Weights & Biases logging')
+    parser.add_argument('--no-wandb', dest='use_wandb', action='store_false', help='Disable Weights & Biases logging')
+    parser.add_argument('--version', type=str, required=True, help='Experiment version identifier (e.g., 0.0.0_lstm)')
+    parser.set_defaults(use_wandb=True)
     
     args = parser.parse_args()
     
     # Set up paths
     project_root = Path(__file__).parent.parent.parent
     data_dir = project_root / args.data_dir
-    output_dir = project_root / args.output_dir
-    output_dir.mkdir(exist_ok=True)
+    output_dir = project_root / args.output_dir / args.version
+    output_dir.mkdir(parents=True, exist_ok=True)
     
     # Load data
     X_train, X_val, X_test, y_train, y_val, y_test = load_preprocessed_data(data_dir)
@@ -413,7 +415,7 @@ def main():
     if args.use_wandb:
         logger = WandbLogger(
             project="rl-bem-surrogate",
-            name="lstm-surrogate-model",
+            name=args.version,
             save_dir=str(project_root / "wandb")
         )
     
