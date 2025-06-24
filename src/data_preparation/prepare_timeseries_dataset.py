@@ -258,14 +258,13 @@ class TimeSeriesDataPreprocessor:
 
     def create_windows_for_buildings(self, df: pd.DataFrame, 
                                      building_ids: List[int],
-                                     input_window: int = 168, 
-                                     output_window: int = 24,
+                                     window_size: int = 24,
                                      step: int = 24) -> Tuple[np.ndarray, np.ndarray]:
-        """Create sliding windows for a list of buildings."""
+        """Create sliding windows for a list of buildings, with input and output covering the same timespan of window_size."""
         logging.info(f"Creating sliding windows for {len(building_ids)} buildings...")
-        
+
         all_X, all_y = [], []
-        
+
         target_cols = self.config.get('primary_target', []) + self.config.get('secondary_targets', [])
         # Only use numeric columns for window creation
         df_numeric = df.drop(columns=['bldg_id', 'timestamp'])
@@ -274,21 +273,22 @@ class TimeSeriesDataPreprocessor:
 
         for building_id in tqdm(building_ids, desc="Creating windows"):
             building_df = df[df['bldg_id'] == building_id].sort_values(by='timestamp')
-            if len(building_df) < input_window + output_window: continue
+            if len(building_df) < window_size:
+                continue
 
             building_numeric_df = building_df.drop(columns=['bldg_id', 'timestamp']).select_dtypes(include=[np.number])
             X_data = building_numeric_df[feature_cols].to_numpy()
             y_data = building_numeric_df[[col for col in target_cols if col in building_numeric_df.columns]].to_numpy()
 
-            for i in range(0, len(building_df) - input_window - output_window + 1, step):
-                all_X.append(X_data[i:i + input_window])
-                all_y.append(y_data[i + input_window:i + input_window + output_window])
+            for i in range(0, len(building_df) - window_size + 1, step):
+                all_X.append(X_data[i:i + window_size])
+                all_y.append(y_data[i:i + window_size])
 
         if not all_X:
             return np.array([]), np.array([])
-            
+
         X_windows, y_windows = np.array(all_X, dtype=np.float32), np.array(all_y, dtype=np.float32)
-        
+
         logging.info(f"Created {len(X_windows)} windows. X shape: {X_windows.shape}, y shape: {y_windows.shape}")
         return X_windows, y_windows
     
@@ -342,7 +342,7 @@ def main():
     
     logging.info(f"Train: {len(train_ids)}, Val: {len(val_ids)}, Test: {len(test_ids)} buildings")
     
-    window_params = {'input_window': 168, 'output_window': 24, 'step': 24}
+    window_params = {'window_size': 24, 'step': 24}
     X_train, y_train = preprocessor.create_windows_for_buildings(processed_df, train_ids, **window_params)
     X_val, y_val = preprocessor.create_windows_for_buildings(processed_df, val_ids, **window_params)
     X_test, y_test = preprocessor.create_windows_for_buildings(processed_df, test_ids, **window_params)
