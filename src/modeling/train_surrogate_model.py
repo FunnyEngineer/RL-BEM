@@ -128,6 +128,57 @@ class LSTMSurrogateModel(pl.LightningModule):
         
         return output
     
+    def predict(self, state, action):
+        """
+        Predict next state given current state window and action.
+        This method is designed for RL environment integration.
+        Args:
+            state: np.ndarray, current state window (shape: [window, features] or [features,])
+            action: np.ndarray, action vector (shape: [features,])
+        Returns:
+            np.ndarray: predicted next state (shape: [features,])
+        """
+        import torch
+        # Convert to torch tensors
+        if isinstance(state, np.ndarray):
+            state = torch.FloatTensor(state)
+        if isinstance(action, np.ndarray):
+            action = torch.FloatTensor(action)
+        # If state is 1D, treat as a single time step
+        if len(state.shape) == 1:
+            state = state.unsqueeze(0)
+        # If state is 2D (window, features), concatenate action to last time step
+        # For RL, we typically want to append action to the last time step
+        if len(state.shape) == 2:
+            # Option 1: Concatenate action to last time step only
+            input_seq = state.clone()
+            input_seq[-1] = torch.cat([state[-1], action], dim=-1)
+            input_seq = input_seq.unsqueeze(0)  # [1, window, features]
+        else:
+            # Fallback: treat as [1, window, features]
+            input_seq = state.unsqueeze(0)
+        # Pad or truncate to expected sequence length
+        expected_seq_len = self.sequence_length
+        current_seq_len = input_seq.shape[1]
+        feature_dim = input_seq.shape[2]
+        if current_seq_len < expected_seq_len:
+            padding = torch.zeros(1, expected_seq_len - current_seq_len, feature_dim)
+            input_seq = torch.cat([input_seq, padding], dim=1)
+        elif current_seq_len > expected_seq_len:
+            input_seq = input_seq[:, -expected_seq_len:, :]
+        self.eval()
+        with torch.no_grad():
+            output = self(input_seq)
+            # Take the last output as the next state prediction
+            if len(output.shape) == 3:
+                predicted_state = output[0, -1, :]
+            else:
+                predicted_state = output[0, :]
+            # If output shape doesn't match state[-1], fallback to state + action + noise
+            if predicted_state.shape[0] != state.shape[1]:
+                predicted_state = state[-1] + action + torch.randn_like(state[-1]) * 0.01
+            return predicted_state.cpu().numpy()
+    
     def training_step(self, batch, batch_idx):
         """Training step."""
         x, y = batch

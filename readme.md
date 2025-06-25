@@ -41,12 +41,12 @@ This plan outlines the steps to create a machine learning (ML) surrogate model f
   - Create sliding windows (e.g., use past 168h to predict next 24h).  
   - *Estimated time*: 2 hours  
 
-- [ ] **Task 3.2**: Train a sequence model  
+- [x] **Task 3.2**: Train a sequence model  
   - Build a sequence model (RNN, LSTM, GRU, TCN, or transformer) using `pytorch`.  
   - Predict time series targets (e.g., indoor temperature, energy use) from time series and static features.  
   - *Estimated time*: 4 hours  
 
-- [ ] **Task 3.3**: Evaluate the model  
+- [x] **Task 3.3**: Evaluate the model  
   - Compute validation metrics (e.g., MAE, RMSE, DTW) on time series.  
   - Plot predicted vs. actual time series curves.  
   - *Estimated time*: 2 hours  
