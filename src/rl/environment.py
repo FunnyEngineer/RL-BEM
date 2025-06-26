@@ -20,7 +20,7 @@ class BuildingEnergyEnvironment(gym.Env):
         """
         Args:
             surrogate_model: Trained surrogate model with a predict(state_window, action) method
-            action_space_config: Dict defining action space (e.g., bounds for setpoints)
+            action_space_config: Dict defining action space (e.g., bounds for setpoints). Supports multi-dimensional actions (e.g., heating/cooling setpoints).
             initial_window: np.ndarray, initial window of time series (shape: [window, features])
             reward_fn: Callable (window, action, next_window, target_window) -> float, or None for default
             state_window: Number of time steps in the state window
@@ -29,6 +29,7 @@ class BuildingEnergyEnvironment(gym.Env):
             state_mean, state_std: For normalization (if used)
             seed: Random seed
         """
+        # action_space_config can be multi-dimensional, e.g., {'heating_setpoint': (18,22), 'cooling_setpoint': (24,28)}
         super().__init__()
         self.surrogate_model = surrogate_model
         self.state_window = state_window

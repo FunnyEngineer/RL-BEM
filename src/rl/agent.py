@@ -6,7 +6,7 @@ class QLearningAgent:
     Research-grade Q-learning agent for discrete action spaces in building energy RL environment.
     Supports Q-table save/load, logging, reproducibility, and evaluation mode.
     """
-    def __init__(self, state_size, action_bins, learning_rate=0.1, discount_factor=0.99, epsilon=0.1, seed=None, normalize_state=False, state_mean=None, state_std=None):
+    def __init__(self, state_size, action_bins, learning_rate=0.1, discount_factor=0.99, epsilon=0.1, epsilon_decay=1.0, seed=None, normalize_state=False, state_mean=None, state_std=None):
         """
         Args:
             state_size: int, size of the flattened state vector
@@ -14,6 +14,7 @@ class QLearningAgent:
             learning_rate: float, Q-learning learning rate
             discount_factor: float, Q-learning discount factor
             epsilon: float, epsilon-greedy exploration rate
+            epsilon_decay: float, multiplicative decay for epsilon after each episode
             seed: random seed
             normalize_state: whether to normalize state
             state_mean, state_std: for normalization
@@ -24,6 +25,7 @@ class QLearningAgent:
         self.learning_rate = learning_rate
         self.discount_factor = discount_factor
         self.epsilon = epsilon
+        self.epsilon_decay = epsilon_decay
         self.rng = np.random.default_rng(seed)
         self.normalize_state = normalize_state
         self.state_mean = state_mean
@@ -103,4 +105,8 @@ class QLearningAgent:
         if total == 0:
             print("No actions taken yet.")
         else:
-            print(f"Exploration: {self.exploration_count} ({100*self.exploration_count/total:.1f}%) | Exploitation: {self.exploitation_count} ({100*self.exploitation_count/total:.1f}%)") 
+            print(f"Exploration: {self.exploration_count} ({100*self.exploration_count/total:.1f}%) | Exploitation: {self.exploitation_count} ({100*self.exploitation_count/total:.1f}%)")
+
+    def decay_epsilon(self, min_epsilon=0.01):
+        """Decay epsilon by epsilon_decay factor, not going below min_epsilon."""
+        self.epsilon = max(self.epsilon * self.epsilon_decay, min_epsilon) 

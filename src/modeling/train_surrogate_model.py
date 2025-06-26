@@ -147,18 +147,26 @@ class LSTMSurrogateModel(pl.LightningModule):
         # If state is 1D, treat as a single time step
         if len(state.shape) == 1:
             state = state.unsqueeze(0)
-        # If state is 2D (window, features), concatenate action to last time step
-        # For RL, we typically want to append action to the last time step
-        if len(state.shape) == 2:
-            # Option 1: Concatenate action to last time step only
-            input_seq = state.clone()
-            input_seq[-1] = torch.cat([state[-1], action], dim=-1)
-            input_seq = input_seq.unsqueeze(0)  # [1, window, features]
+        # Replace the relevant feature(s) in the last time step with the action value(s)
+        input_seq = state.clone()
+        if action.shape[0] == 1:
+            input_seq[-1, 0] = action[0]
         else:
-            # Fallback: treat as [1, window, features]
-            input_seq = state.unsqueeze(0)
+            input_seq[-1, :action.shape[0]] = action
+        input_seq = input_seq.unsqueeze(0)  # [1, window, features]
         # Pad or truncate to expected sequence length
-        expected_seq_len = self.sequence_length
+        # Robustly access sequence_length from hparams (as dict or attribute) or fallback
+        if hasattr(self, 'hparams'):
+            if isinstance(self.hparams, dict):
+                expected_seq_len = self.hparams['sequence_length']
+            elif hasattr(self.hparams, 'sequence_length'):
+                expected_seq_len = self.hparams.sequence_length
+            else:
+                raise AttributeError('LSTMSurrogateModel.hparams has no sequence_length attribute or key.')
+        elif hasattr(self, 'sequence_length'):
+            expected_seq_len = self.sequence_length
+        else:
+            raise AttributeError('LSTMSurrogateModel has no sequence_length attribute.')
         current_seq_len = input_seq.shape[1]
         feature_dim = input_seq.shape[2]
         if current_seq_len < expected_seq_len:
