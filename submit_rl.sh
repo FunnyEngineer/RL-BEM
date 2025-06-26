@@ -5,45 +5,20 @@
 #       followed by "module help launcher".
 #----------------------------------------------------
 
-#SBATCH -J RL-BEM           # Job name
-#SBATCH -o RL-BEM.log       # Name of stdout output file
-#SBATCH -e RL-BEM.log       # Name of stderr error file
-#SBATCH -p gpu-a100-small        # Queue (partition) name
-#SBATCH -N 1               # Total # of nodes (must be 1 for serial)
-#SBATCH -n 1               # Total # of mpi tasks (should be 1 for serial)
-#SBATCH -A MSS23005
-#SBATCH -t 48:00:00        # Run time (hh:mm:ss)
-#SBATCH --mail-type=all
-#SBATCH --mail-user=funnyengineer@utexas.edu
+#SBATCH --job-name=rl-bem-all-agents
+#SBATCH --output=logs/rl_bem_all_agents_%j.out
+#SBATCH --error=logs/rl_bem_all_agents_%j.err
+#SBATCH --time=24:00:00
+#SBATCH --partition=cpu
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
 
-# Initialize variables
-version=""
+module load python/3.9
+source ~/myenv/bin/activate  # or your actual venv path
 
-# Parse arguments
-while getopts "v:" opt; do
-  case $opt in
-    v) version="$OPTARG"
-    ;;
-    \?) echo "Invalid option -$OPTARG" >&2
-        echo "Usage: sbatch submit.sh -v your_version_string"
-        exit 1
-    ;;
-  esac
-done
+# Run all DQN agents
+bash run_all_dqn_agents.sh
 
-# Check if the version argument is provided
-if [ -z "$version" ]; then
-  echo "Error: No version argument provided."
-  echo "Usage: sbatch submit.sh -v your_version_string"
-  exit 1
-fi
-
-# Any other commands must follow all #SBATCH directives...
-module load python3/3.9.7
-source /work/08388/tudai/ls6/envs/bem/bin/activate
-
-# Set the environment variable before running
-export HCP_ENVIRONMENT=true
-
-# Launch serial code...
-python src/rl/run_simple_rl.py --model-path models/$version/last.ckpt --episodes 100 --max-steps 24 --seed 42
+# Run random agent baseline
+bash run_random_agent_baseline.sh

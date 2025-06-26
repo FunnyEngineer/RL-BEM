@@ -8,7 +8,7 @@ This plan outlines the steps to create a machine learning (ML) surrogate model f
 **Objective**: Process the ResStock time series dataset to extract relevant features and targets for model training.  
 **Total Estimated Time**: 14 hours
 
-- [ ] **Task 2.1**: Select relevant features and targets  
+- [x] **Task 2.1**: Select relevant features and targets  
   - **Action**: Choose input features from both metadata (e.g., building type, vintage, insulation) and time series (e.g., outdoor temperature, hour of day). Select time series targets such as hourly indoor temperature (`out.zone_mean_air_temp.conditioned_space.c`) and/or energy use.  
   - **Details**: Merge metadata with time series for each building. Confirm feature and target availability in both datasets.  
   - *Estimated time*: 2 hours  
@@ -36,7 +36,7 @@ This plan outlines the steps to create a machine learning (ML) surrogate model f
 **Objective**: Train an ML sequence model to approximate EnergyPlus time series outputs.  
 **Total Estimated Time**: 8 hours
 
-- [ ] **Task 3.1**: Preprocess the dataset for sequence modeling  
+- [x] **Task 3.1**: Preprocess the dataset for sequence modeling  
   - Normalize inputs and outputs.  
   - Create sliding windows (e.g., use past 168h to predict next 24h).  
   - *Estimated time*: 2 hours  
@@ -59,13 +59,13 @@ This plan outlines the steps to create a machine learning (ML) surrogate model f
 **Objective**: Implement an RL agent to select optimal simulation points or control actions over time.  
 **Total Estimated Time**: 18 hours
 
-- [ ] **Task 4.1**: Design the RL environment  
+- [x] **Task 4.1**: Design the RL environment  
   - **State**: Recent time series (model error, recent weather, etc.).  
   - **Action**: Select next input parameters (static or time-varying, e.g., thermostat setpoints, schedules).  
   - **Reward**: Reduction in time series prediction error, or achieving temporal goals (e.g., comfort, peak reduction).  
   - *Estimated time*: 4 hours  
 
-- [ ] **Task 4.2**: Implement a simple RL algorithm  
+- [x] **Task 4.2**: Implement a simple RL algorithm  
   - Use Q-learning or policy gradient with a discretized action space (e.g., setpoint schedules).  
   - Set hyperparameters (learning rate, discount factor, exploration rate).  
   - *Estimated time*: 6 hours  
@@ -75,7 +75,7 @@ This plan outlines the steps to create a machine learning (ML) surrogate model f
   - Retrain the surrogate model with new time series data.  
   - *Estimated time*: 8 hours  
 
-- [x] **Task 4.3**: Integrate RL with surrogate sequence model  
+- [x] **Task 4.4**: Integrate RL with surrogate sequence model  
   - ✅ Created `ActiveLearningLoop` class for iterative RL-driven data collection
   - ✅ Implemented RL agent training and new sample collection
   - ✅ Added surrogate model retraining with expanded dataset
@@ -91,12 +91,12 @@ This plan outlines the steps to create a machine learning (ML) surrogate model f
 **Objective**: Iteratively improve the surrogate sequence model using RL.  
 **Total Estimated Time**: 10 hours
 
-- [ ] **Task 5.1**: Run the RL loop  
+- [x] **Task 5.1**: Run the RL loop  
   - Execute 10-20 iterations: select point/control, run simulation, retrain model.  
   - Monitor validation error improvement on time series.  
   - *Estimated time*: 10 hours (run overnight if needed)  
 
-- [ ] **Task 5.2**: Optimize simulation time  
+- [x] **Task 5.2**: Optimize simulation time  
   - Reduce iterations or use a faster surrogate if simulations are slow.  
   - *Estimated time*: Ongoing  
 
@@ -108,21 +108,35 @@ This plan outlines the steps to create a machine learning (ML) surrogate model f
 **Objective**: Assess and document the final model.  
 **Total Estimated Time**: 7 hours
 
-- [ ] **Task 6.1**: Compare final and initial models  
+- [x] **Task 6.1**: Compare final and initial models  
   - Evaluate both on a test set or via cross-validation (time series metrics).  
   - Measure accuracy improvement.  
   - *Estimated time*: 2 hours  
 
 - [ ] **Task 6.2**: Compare to a baseline  
-  - Train a model with random sampling for the same number of simulations.  
-  - Compare accuracy with RL-guided model.  
+  - Random agent baseline script is being added for direct comparison with RL-guided models.
   - *Estimated time*: 3 hours  
 
 - [ ] **Task 6.3**: Document findings  
-  - Summarize methodology, results, and next steps.  
+  - Documentation and summary script will be added after running all experiments.
   - *Estimated time*: 2 hours  
 
 **Final Deliverable**: An RL-enhanced surrogate sequence model with documented performance.
+
+---
+
+## Running All DQN Agents and Baselines on LS6
+
+To run all DQN agent variants and the random agent baseline on LS6:
+
+1. **Submit the batch job:**
+   - Use the provided `submit_rl.sh` script (see below for the updated version) to run all agents in sequence. This will execute `run_all_dqn_agents.sh` and the random agent baseline script, saving all results in the `reports/` directory.
+
+2. **Check results:**
+   - Learning curves, reward trajectories, and agent checkpoints will be saved in `reports/`.
+
+3. **Compare and document:**
+   - Use the provided comparison and documentation scripts (to be added) to analyze and summarize results.
 
 ---
 
