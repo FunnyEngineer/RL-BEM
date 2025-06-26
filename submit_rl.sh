@@ -16,8 +16,9 @@
 #SBATCH --mail-type=all
 #SBATCH --mail-user=funnyengineer@utexas.edu
 
-module load python/3.9
+module load python/3.9.7
 source /work/08388/tudai/ls6/envs/bem/bin/activate
+export PYTHONPATH=$(pwd)
 
 # Run all DQN agents
 bash run_all_dqn_agents.sh
