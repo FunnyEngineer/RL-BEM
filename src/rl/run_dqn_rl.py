@@ -105,8 +105,7 @@ def main():
         epsilon_decay=args.epsilon_decay,
         buffer_size=10000,
         batch_size=64,
-        target_update_freq=100,
-        seed=args.seed
+        target_update_freq=100
     )
     agent = get_agent(args.agent_type, state_dim=state_size, action_dim=n_actions, **agent_kwargs)
 
