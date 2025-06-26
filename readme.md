@@ -70,10 +70,18 @@ This plan outlines the steps to create a machine learning (ML) surrogate model f
   - Set hyperparameters (learning rate, discount factor, exploration rate).  
   - *Estimated time*: 6 hours  
 
-- [ ] **Task 4.3**: Integrate RL with EnergyPlus and surrogate sequence model  
+- [x] **Task 4.3**: Integrate RL with EnergyPlus and surrogate sequence model  
   - Update simulation script to use RL-selected time series inputs.  
   - Retrain the surrogate model with new time series data.  
   - *Estimated time*: 8 hours  
+
+- [x] **Task 4.3**: Integrate RL with surrogate sequence model  
+  - ✅ Created `ActiveLearningLoop` class for iterative RL-driven data collection
+  - ✅ Implemented RL agent training and new sample collection
+  - ✅ Added surrogate model retraining with expanded dataset
+  - ✅ Created `run_active_learning.py` script for easy execution
+  - ✅ Added comprehensive logging and evaluation metrics
+  - *Estimated time*: 8 hours
 
 **Checkpoint**: By end of Day 8, you should have an RL agent selecting new simulation points or control actions and updating the dataset.
 

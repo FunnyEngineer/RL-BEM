@@ -1,9 +1,3 @@
-# DEPRECATED: Use src/rl/agents/q_learning_agent.py for QLearningAgent and all RL agents.
-# This file is kept for backward compatibility and will be removed in the future.
-import warnings
-warnings.warn('src/rl/agent.py is deprecated. Use src/rl/agents/q_learning_agent.py instead.', DeprecationWarning)
-# from src.rl.agents.q_learning_agent import QLearningAgent
-
 import numpy as np
 import pickle
 

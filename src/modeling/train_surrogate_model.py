@@ -158,15 +158,15 @@ class LSTMSurrogateModel(pl.LightningModule):
         # Robustly access sequence_length from hparams (as dict or attribute) or fallback
         if hasattr(self, 'hparams'):
             if isinstance(self.hparams, dict):
-                expected_seq_len = self.hparams['sequence_length']
+                expected_seq_len = self.hparams.get('sequence_length', 168)
             elif hasattr(self.hparams, 'sequence_length'):
                 expected_seq_len = self.hparams.sequence_length
             else:
-                raise AttributeError('LSTMSurrogateModel.hparams has no sequence_length attribute or key.')
+                expected_seq_len = 168
         elif hasattr(self, 'sequence_length'):
             expected_seq_len = self.sequence_length
         else:
-            raise AttributeError('LSTMSurrogateModel has no sequence_length attribute.')
+            expected_seq_len = 168
         current_seq_len = input_seq.shape[1]
         feature_dim = input_seq.shape[2]
         if current_seq_len < expected_seq_len:
@@ -186,6 +186,43 @@ class LSTMSurrogateModel(pl.LightningModule):
             if predicted_state.shape[0] != state.shape[1]:
                 predicted_state = state[-1] + action + torch.randn_like(state[-1]) * 0.01
             return predicted_state.cpu().numpy()
+    
+    def predict_batch(self, X: np.ndarray) -> np.ndarray:
+        """
+        Predict on a batch of input data.
+        
+        Args:
+            X: Input data of shape [n_samples, sequence_length, features] or [n_samples, features]
+            
+        Returns:
+            np.ndarray: Predictions of shape [n_samples, features] or [n_samples]
+        """
+        self.eval()
+        with torch.no_grad():
+            # Convert to torch tensor
+            if isinstance(X, np.ndarray):
+                X_tensor = torch.FloatTensor(X)
+            else:
+                X_tensor = X
+            
+            # Handle different input shapes
+            if len(X_tensor.shape) == 2:
+                # [n_samples, features] -> add sequence dimension
+                X_tensor = X_tensor.unsqueeze(1)  # [n_samples, 1, features]
+            
+            # Move to device
+            device = next(self.parameters()).device
+            X_tensor = X_tensor.to(device)
+            
+            # Get predictions
+            predictions = self(X_tensor)
+            
+            # Handle output shape
+            if len(predictions.shape) == 3:
+                # [n_samples, sequence_length, features] -> take last timestep
+                predictions = predictions[:, -1, :]
+            
+            return predictions.cpu().numpy()
     
     def training_step(self, batch, batch_idx):
         """Training step."""
@@ -408,6 +445,149 @@ def plot_predictions(predictions: np.ndarray, targets: np.ndarray, save_path: Pa
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()
+
+def train_surrogate_model(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_val: np.ndarray,
+    y_val: np.ndarray,
+    save_dir: str = 'models',
+    model_name: str = 'surrogate_model',
+    pretrained_model: LSTMSurrogateModel = None,
+    sequence_length: int = 168,
+    hidden_size: int = 128,
+    num_layers: int = 2,
+    dropout: float = 0.2,
+    learning_rate: float = 5e-4,
+    batch_size: int = 32,
+    max_epochs: int = 30,
+    use_wandb: bool = False
+) -> LSTMSurrogateModel:
+    """
+    Train a surrogate model with the given data.
+    
+    Args:
+        X_train: Training input data
+        y_train: Training target data
+        X_val: Validation input data
+        y_val: Validation target data
+        save_dir: Directory to save the model
+        model_name: Name for the model
+        pretrained_model: Optional pretrained model to continue training
+        sequence_length: Length of input sequences
+        hidden_size: LSTM hidden size
+        num_layers: Number of LSTM layers
+        dropout: Dropout rate
+        learning_rate: Learning rate
+        batch_size: Batch size
+        max_epochs: Maximum training epochs
+        use_wandb: Whether to use Weights & Biases logging
+    
+    Returns:
+        Trained LSTMSurrogateModel
+    """
+    # Create output directory
+    output_dir = Path(save_dir) / model_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Get input and output dimensions
+    input_size = X_train.shape[2] if len(X_train.shape) == 3 else X_train.shape[1]
+    if len(y_train.shape) == 3:
+        prediction_horizon = y_train.shape[1]
+        output_size = y_train.shape[2]
+    else:
+        prediction_horizon = 1
+        output_size = y_train.shape[1] if len(y_train.shape) > 1 else 1
+    
+    # Initialize or load model
+    if pretrained_model is not None:
+        print(f"Continuing training from pretrained model")
+        model = pretrained_model
+        # Update learning rate for fine-tuning
+        model.learning_rate = learning_rate * 0.1
+    else:
+        print(f"Creating new model with input_size={input_size}, output_size={output_size}")
+        model = LSTMSurrogateModel(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            output_size=output_size,
+            prediction_horizon=prediction_horizon,
+            dropout=dropout,
+            learning_rate=learning_rate,
+            sequence_length=sequence_length
+        )
+    
+    # Create data loaders
+    train_loader, val_loader, _ = create_data_loaders(
+        X_train, X_val, X_train,  # Use train as test for simplicity
+        y_train, y_val, y_train,
+        sequence_length=sequence_length,
+        batch_size=batch_size
+    )
+    
+    # Set up callbacks
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=output_dir,
+        filename='surrogate-model-{epoch:02d}-{val_loss:.4f}',
+        monitor='val_loss',
+        mode='min',
+        save_top_k=1,
+        save_last=True
+    )
+    
+    early_stopping = EarlyStopping(
+        monitor='val_loss',
+        patience=10,
+        mode='min',
+        verbose=True
+    )
+    
+    callbacks = [checkpoint_callback, early_stopping]
+    
+    # Set up logger
+    logger = None
+    if use_wandb:
+        logger = WandbLogger(
+            project="rl-bem-surrogate",
+            name=model_name,
+            save_dir=str(Path(save_dir).parent / "wandb")
+        )
+    
+    # Initialize trainer
+    trainer = pl.Trainer(
+        max_epochs=max_epochs,
+        callbacks=callbacks,
+        logger=logger,
+        accelerator='auto',
+        devices='auto',
+        log_every_n_steps=50,
+        val_check_interval=0.25,
+        gradient_clip_val=1.0
+    )
+    
+    # Train model
+    print(f"Training {model_name} for {max_epochs} epochs...")
+    trainer.fit(model, train_loader, val_loader)
+    
+    # Load best model
+    best_model_path = checkpoint_callback.best_model_path
+    if best_model_path and best_model_path != "":
+        print(f"Loading best model from: {best_model_path}")
+        model = LSTMSurrogateModel.load_from_checkpoint(best_model_path)
+    else:
+        print("No best model checkpoint found, using current model")
+    
+    # Save final model
+    final_model_path = output_dir / 'surrogate_model_final.ckpt'
+    trainer.save_checkpoint(final_model_path)
+    print(f"Final model saved to: {final_model_path}")
+    
+    # Log to wandb if enabled
+    if use_wandb and logger:
+        wandb.finish()
+    
+    return model
 
 def main():
     """Main training function."""
