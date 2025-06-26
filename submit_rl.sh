@@ -6,16 +6,18 @@
 #----------------------------------------------------
 
 #SBATCH --job-name=rl-bem-all-agents
-#SBATCH --output=logs/rl_bem_all_agents_%j.out
-#SBATCH --error=logs/rl_bem_all_agents_%j.err
-#SBATCH --time=24:00:00
-#SBATCH --partition=cpu
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
+#SBATCH --output=logs/rl_bem_all_agents_%j.log
+#SBATCH --error=logs/rl_bem_all_agents_%j.log
+#SBATCH -p gpu-a100-small        # Queue (partition) name
+#SBATCH -N 1               # Total # of nodes (must be 1 for serial)
+#SBATCH -n 1               # Total # of mpi tasks (should be 1 for serial)
+#SBATCH -A MSS23005
+#SBATCH -t 48:00:00        # Run time (hh:mm:ss)
+#SBATCH --mail-type=all
+#SBATCH --mail-user=funnyengineer@utexas.edu
 
 module load python/3.9
-source ~/myenv/bin/activate  # or your actual venv path
+source /work/08388/tudai/ls6/envs/bem/bin/activate
 
 # Run all DQN agents
 bash run_all_dqn_agents.sh
