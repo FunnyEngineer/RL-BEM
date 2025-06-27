@@ -15,7 +15,7 @@ def get_surrogate_model(use_mock, model_path=None):
                 return state[-1] + action + np.random.normal(0, 0.05, size=state[-1].shape)
         return MockSurrogateModel()
     else:
-        from src.modeling.train_surrogate_model import LSTMSurrogateModel
+        from src.modeling.models.lstm_model import LSTMSurrogateModel
         if model_path is None:
             raise ValueError("Must provide model_path for real surrogate model.")
         return LSTMSurrogateModel.load_from_checkpoint(model_path)

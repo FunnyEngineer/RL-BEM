@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import argparse
 import pickle
 from environment import BuildingEnergyEnvironment
-from agent import QLearningAgent
+from agents.q_learning_agent import QLearningAgent
 import datetime
 import seaborn as sns
 
@@ -21,7 +21,8 @@ def get_surrogate_model(use_mock, model_path=None):
                 return state[-1] + action + np.random.normal(0, 0.05, size=state[-1].shape)
         return MockSurrogateModel()
     else:
-        from src.modeling.train_surrogate_model import LSTMSurrogateModel
+        # Use new refactored model path (train_surrogate_model is deprecated)
+        from src.modeling.models.lstm_model import LSTMSurrogateModel
         if model_path is None:
             raise ValueError("Must provide model_path for real surrogate model.")
         return LSTMSurrogateModel.load_from_checkpoint(model_path)

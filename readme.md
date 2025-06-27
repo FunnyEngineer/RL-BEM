@@ -160,3 +160,65 @@ To run all DQN agent variants and the random agent baseline on LS6:
   - [Stable Baselines3 RL](https://stable-baselines3.readthedocs.io/en/master/)  
 
 Good luck! Reach out if you need help with any step.
+
+---
+
+## 2025-06-27 – Codebase Refactor for Flexible Surrogate Models
+
+A lightweight, **architecture-agnostic** training workflow was introduced to
+replace the monolithic `train_surrogate_model.py` script.
+
+Key points
+
+* `src/modeling/models/` – contains all network architectures.  New models are
+  registered in `models/__init__.py` and selected at runtime via
+  `--model <key>`.
+* `BaseSequenceModel` – common LightningModule with boiler-plate training logic
+  (optimiser, LR-scheduler, logging) to avoid code duplication.
+* `LSTMSurrogateModel` – re-implemented to inherit from the base class and live
+  in `models/lstm_model.py`.
+* `src/modeling/train_sequence_model.py` – **new** generic training entry-point
+  that accepts arbitrary architectures plus any extra hyper-parameters:
+  
+  ```bash
+  # Train default LSTM
+  python -m src.modeling.train_sequence_model --version my_run
+  
+  # Train GRU once implemented
+  python -m src.modeling.train_sequence_model --model gru --hidden_size 256 \
+         --version gru_run
+  ```
+* `TimeSeriesDataset` & `create_data_loaders()` moved to
+  `src/modeling/datasets.py` for reuse.
+
+### Deprecation Notice
+
+`src/modeling/train_surrogate_model.py` is **deprecated**.  It is still kept for
+legacy scripts (e.g. `active_learning_loop.py`) but will be removed in a future
+release. A `DeprecationWarning` is emitted on import to encourage migration.
+
+Scripts that only needed the surrogate model class have been updated to use the
+new path:
+
+```
+from src.modeling.models.lstm_model import LSTMSurrogateModel
+```
+
+Please migrate custom notebooks and pipelines accordingly.
+
+### Import style change (Lightning ≥ 2)
+
+All source files now follow the official ≥ v2 syntax:
+
+```python
+import lightning as L
+
+class MyModel(L.LightningModule):
+    ...
+
+trainer = L.Trainer(...)
+```
+
+The legacy alias `import pytorch_lightning as pl` has been removed from the
+codebase to avoid confusion.  If you work in notebooks remember to update your
+imports as well.

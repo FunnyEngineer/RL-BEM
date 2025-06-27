@@ -15,7 +15,8 @@ from .agent import QLearningAgent
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(project_root)
 
-from src.modeling.train_surrogate_model import LSTMSurrogateModel, train_surrogate_model
+from src.modeling.models.lstm_model import LSTMSurrogateModel
+from src.modeling.utils import train_model_arrays
 
 class ActiveLearningLoop:
     """
@@ -82,13 +83,14 @@ class ActiveLearningLoop:
             model = LSTMSurrogateModel.load_from_checkpoint(self.initial_model_path)
         else:
             print("Training initial surrogate model...")
-            model = train_surrogate_model(
+            model = train_model_arrays(
                 X_train=self.X_train,
                 y_train=self.y_train,
                 X_val=self.X_val,
                 y_val=self.y_val,
                 save_dir=self.models_dir,
-                model_name="initial_surrogate"
+                model_name="initial_surrogate",
+                model_cls=LSTMSurrogateModel,
             )
         return model
     
@@ -191,14 +193,14 @@ class ActiveLearningLoop:
         print(f"Combined dataset size: {combined_X.shape}")
         
         # Retrain model
-        updated_model = train_surrogate_model(
+        updated_model = train_model_arrays(
             X_train=combined_X,
             y_train=combined_y,
             X_val=self.X_val,
             y_val=self.y_val,
             save_dir=self.models_dir,
             model_name=f"surrogate_iteration_{iteration}",
-            pretrained_model=surrogate_model
+            model_cls=LSTMSurrogateModel,
         )
         
         return updated_model
